@@ -71,9 +71,17 @@ def extract_log_entries(email_body):
     # Search for "Log:" entries in the text
     logs = re.findall(r'Log:\s*([^\n<]+)', soup.get_text())
     if logs:
-        # The first log entry contains the headers
-        headers = logs[0].replace(";", "|").split("|")
-        data_rows = [log.replace(";", "|").split("|") for log in logs[1:]]
+        # Determine the delimiter used in the first log entry
+        if "," in logs[0]:
+            delimiter = ","
+        elif ";" in logs[0]:
+            delimiter = ";"
+        else:
+            delimiter = "|"
+
+        # Extract headers and data rows using the detected delimiter
+        headers = logs[0].replace(";", "|").replace(",", "|").split("|")
+        data_rows = [log.replace(";", "|").replace(",", "|").split("|") for log in logs[1:]]
 
         df_logs = pd.DataFrame(data_rows, columns=headers)
         if not df_logs.empty:
