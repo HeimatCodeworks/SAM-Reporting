@@ -4,8 +4,10 @@ from gmail_extractor import (
     search_emails,
     fetch_emails,
     save_to_excel,
-    logout_from_imap
+    logout_from_imap,
+    format_date  # Import the format_date function to use it here
 )
+
 
 def main():
     print("=== SAM Email Reporter ===")
@@ -16,12 +18,17 @@ def main():
     mail = connect_to_imap(email_user, app_password)
 
     while True:
-        # Get user inputs for search
         subject_filter = input("\nEnter the email subject filter: ").strip()
-        start_date = input("Enter the start date (e.g., 01-Oct-2024): ").strip()
-        end_date = input("Enter the end date (e.g., 24-Oct-2024): ").strip()
 
-        print(f"\n[INFO] Searching for emails with subject containing '{subject_filter}' from {start_date} to {end_date}...")
+        # Prompt for start and end dates, re-prompting as needed
+        start_date = input("Enter the start date (YYYY-MM-DD): ").strip()
+        start_date = format_date(start_date)
+
+        end_date = input("Enter the end date (YYYY-MM-DD): ").strip()
+        end_date = format_date(end_date)
+
+        print(
+            f"\n[INFO] Searching for emails with subject containing '{subject_filter}' from {start_date} to {end_date}...")
         email_ids = search_emails(mail, subject_filter, start_date, end_date)
 
         if email_ids:
@@ -37,7 +44,6 @@ def main():
         else:
             print("[INFO] No matching emails found.")
 
-        # Ask the user if they want to perform another search
         choice = input("\nDo you want to perform another search? (y/n): ").strip().lower()
         if choice != 'y':
             print("\n[INFO] Exiting the program...")
@@ -51,3 +57,5 @@ if __name__ == "__main__":
     main()
     print("\nPress any key to exit...")
     msvcrt.getch()  # Wait for a key press before exiting
+
+
