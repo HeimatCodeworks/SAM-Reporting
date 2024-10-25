@@ -1,4 +1,4 @@
-﻿# SAM Email Report Extractor v0.1.3
+# SAM Email Report Extractor v0.1.3
 
 ## Overview
 The **SAM Email Report Extractor** is a Python-based tool designed to connect to your Gmail account, search for specific emails based on subject filters and date ranges, extract data from tables or "Log:" entries within these emails, and save the results to an Excel file. The tool can handle data formatted with delimiters such as `|`, `;`, and `,`.
