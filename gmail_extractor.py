@@ -5,14 +5,15 @@ from bs4 import BeautifulSoup
 import pandas as pd
 import os
 import re
-
+from datetime import datetime
+from email.utils import parsedate_to_datetime
+from email.utils import parsedate_tz, mktime_tz
 
 def console_login():
-    print("Welcome to the SAM Email Report Extractor v0.1.3!")
+    print("Welcome to the SAM Email Report Extractor v0.1.4!")
     email_user = input("Enter your Gmail address: ").strip()
     app_password = getpass.getpass("Enter your app-specific password (hidden): ").strip()
     return email_user, app_password
-
 
 def connect_to_imap(email_user, app_password):
     try:
@@ -24,46 +25,58 @@ def connect_to_imap(email_user, app_password):
         print("[ERROR] Login failed. Please check your credentials.")
         exit(1)
 
-
 def get_user_inputs():
     subject_filter = input("Enter the email subject filter: ").strip()
 
-    start_date = input("Enter the start date (e.g., 01-Oct-2024): ").strip()
-    start_date = format_date(start_date)  # Convert to title case
+    start_date = input("Enter the start date (YYYY-MM-DD): ").strip()
+    start_date = format_date(start_date)
 
-    end_date = input("Enter the end date (e.g., 24-Oct-2024): ").strip()
-    end_date = format_date(end_date)  # Convert to title case
+    end_date = input("Enter the end date (YYYY-MM-DD): ").strip()
+    end_date = format_date(end_date)
 
     return subject_filter, start_date, end_date
 
 def format_date(date_str):
-    """Ensure the date format has the month in title case."""
-    parts = date_str.split('-')
-    if len(parts) == 3:
-        parts[1] = parts[1].title()  # Convert month to title case
-        return '-'.join(parts)
-    return date_str
+    """Convert date from 'YYYY-MM-DD' to 'DD-MMM-YYYY' for IMAP, with re-prompting for invalid formats."""
+    while True:
+        try:
+            # Parse input date in 'YYYY-MM-DD' format
+            date_obj = datetime.strptime(date_str, '%Y-%m-%d')
+            # Convert to 'DD-MMM-YYYY' format
+            return date_obj.strftime('%d-%b-%Y')
+        except ValueError:
+            # If the format is incorrect, ask the user to re-enter the date
+            print(f"[ERROR] Invalid date format: {date_str}. Please use 'YYYY-MM-DD'.")
+            date_str = input("Re-enter the date (YYYY-MM-DD): ").strip()
+
 
 
 
 def search_emails(mail, subject_filter, start_date, end_date):
     try:
-        mail.select('inbox')
-        # Add double quotes around the subject filter for stricter matching
+        mail.select('"[Gmail]/All Mail"')
+
+        # Ensure that the search query has valid formatting
         query = f'(SUBJECT "{subject_filter}" SINCE {start_date} BEFORE {end_date})'
         result, data = mail.search(None, query)
+
+        if result != "OK":
+            print(f"[ERROR] IMAP search failed: {result}")
+            return []
+
         email_ids = data[0].split()
         print(f"[INFO] Found {len(email_ids)} emails matching criteria.")
         return email_ids
+
     except Exception as e:
         print(f"[ERROR] Failed to search emails: {str(e)}")
         return []
 
 
-
-def extract_log_entries(email_body):
+def extract_log_entries(email_body, email_timestamp):
     """
     Extracts 'Log:' entries from the email's HTML content and formats them into a DataFrame.
+    Adds a new column with the email's timestamp as the first column.
     """
     # Parse the email body using BeautifulSoup
     soup = BeautifulSoup(email_body, 'html.parser')
@@ -83,7 +96,12 @@ def extract_log_entries(email_body):
         headers = logs[0].replace(";", "|").replace(",", "|").split("|")
         data_rows = [log.replace(";", "|").replace(",", "|").split("|") for log in logs[1:]]
 
+        # Create a DataFrame from extracted data
         df_logs = pd.DataFrame(data_rows, columns=headers)
+
+        # Add the email timestamp as the first column
+        df_logs.insert(0, 'Email Timestamp', email_timestamp)
+
         if not df_logs.empty:
             print(f"[INFO] Extracted {len(df_logs)} rows from 'Log:' entries.")
             return df_logs
@@ -102,6 +120,30 @@ def fetch_emails(mail, email_ids):
                 if isinstance(response_part, tuple):
                     msg = email.message_from_bytes(response_part[1])
 
+                    # Initialize the timestamp as "Unknown"
+                    email_timestamp = "Unknown"
+
+                    # Extract all "Received" headers from the email
+                    received_headers = msg.get_all('Received')
+                    if received_headers and len(received_headers) >= 3:
+                        # Access the third "Received" header
+                        third_received_header = received_headers[2]
+                        print(f"[DEBUG] Third 'Received' header: {third_received_header}")  # Debug line
+
+                        # Extract the date-time part from the third "Received" header
+                        match = re.search(r'(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})', third_received_header)
+                        if match:
+                            try:
+                                # Parse the date-time string
+                                email_timestamp = datetime.strptime(match.group(1), "%Y-%m-%d %H:%M:%S")
+                                print(f"[DEBUG] Parsed timestamp: {email_timestamp}")  # Debug line
+                            except ValueError as ve:
+                                print(f"[ERROR] Failed to parse timestamp: {ve}")
+                        else:
+                            print("[DEBUG] No valid date-time found in the third 'Received' header.")
+                    else:
+                        print("[DEBUG] Less than 3 'Received' headers found.")
+
                     # Extract the HTML body from the email
                     email_body = None
                     if msg.is_multipart():
@@ -116,7 +158,6 @@ def fetch_emails(mail, email_ids):
                                 )
                                 break
                     else:
-                        # If not multipart, check if it's HTML
                         if msg.get_content_type() == 'text/html':
                             email_body = msg.get_payload(decode=True).decode(
                                 msg.get_content_charset() or 'utf-8',
@@ -125,8 +166,8 @@ def fetch_emails(mail, email_ids):
 
                     # If HTML body is found, process it
                     if email_body:
-                        # Extract 'Log:' entries from the HTML body
-                        df_logs = extract_log_entries(email_body)
+                        # Extract 'Log:' entries from the HTML body, including the timestamp
+                        df_logs = extract_log_entries(email_body, email_timestamp)
 
                         # Ensure df_logs is a DataFrame and not empty before adding it to the tables list
                         if isinstance(df_logs, pd.DataFrame) and not df_logs.empty:
@@ -136,7 +177,6 @@ def fetch_emails(mail, email_ids):
             print(f"[ERROR] Failed to fetch or parse email: {str(e)}")
 
     return tables
-
 
 def save_to_excel(tables, filename='output/output.xlsx'):
     # Check if tables list contains any DataFrames before attempting to concatenate
@@ -157,11 +197,9 @@ def save_to_excel(tables, filename='output/output.xlsx'):
     else:
         print("[INFO] No valid data found to save.")
 
-
 def logout_from_imap(mail):
     mail.logout()
     print("[INFO] Logged out from Gmail")
-
 
 # Main function to execute the script
 if __name__ == '__main__':
@@ -183,3 +221,4 @@ if __name__ == '__main__':
 
     # Logout from IMAP
     logout_from_imap(mail)
+
