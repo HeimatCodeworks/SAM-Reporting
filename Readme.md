@@ -1,21 +1,29 @@
-﻿# SAM Report Extractor
+﻿# SAM Email Reporter
 
 ## Overview
-This Python script connects to your Gmail account, searches for emails by subject and date range, extracts tables from the email body, and saves them to an Excel file.
+The `SAM Email Reporter` is a tool that extracts emails from Gmail and compiles the data into a single Excel sheet.
 
 ## Setup
+1. **Place all files in the same folder:**
+   - `SAM Email Reporter.exe`
+   - `README.md`
+   - An `output` folder (created automatically on the first run).
 
-### 1. Enable IMAP in Gmail
-- Go to **Gmail Settings** → **Forwarding and POP/IMAP**.
-- Under "IMAP access," select "Enable IMAP."
-- Click **Save Changes**.
+2. **Run the Program**
+   - Double-click `SAM Email Reporter.exe` or run it from the command line.
+   - Enter the following information in the console when prompted:
+     - Your Gmail address
+     - Your app-specific password for Gmail
+     - Email subject filter
+     - Start date and end date (format: DD-MMM-YYYY)
 
-### 2. Generate an App-Specific Password
-- Go to [Google Account Security Settings](https://myaccount.google.com/security).
-- Under "Signing in to Google," select **App passwords**.
-- Generate an app-specific password for Gmail.
+3. **Output**
+   - The extracted data will be saved in `output/output.xlsx`.
 
-### 3. Set Up the Virtual Environment
-- If you haven’t already created a virtual environment:
-  ```bash
-  python -m venv .venv
+## Requirements
+- You must create an [app-specific password](https://support.google.com/accounts/answer/185833?hl=en) for your Gmail account to use this tool.
+
+## Troubleshooting
+- If you encounter issues, ensure that you enter the correct credentials and parameters in the console.
+- The `output/output.xlsx` file will contain the extracted data if successful.
+

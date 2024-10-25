@@ -1,27 +1,53 @@
-﻿from gmail_extractor import (
-    console_login, connect_to_imap, get_user_inputs,
-    search_emails, fetch_emails, save_to_excel, logout_from_imap
+﻿import msvcrt
+from gmail_extractor import (
+    connect_to_imap,
+    search_emails,
+    fetch_emails,
+    save_to_excel,
+    logout_from_imap
 )
 
-# Main script for Gmail Table Extraction
-if __name__ == "__main__":
-    # User login
-    email_user, app_password = console_login()
+def main():
+    print("=== SAM Email Reporter ===")
+    email_user = input("Enter your Gmail address: ").strip()
+    app_password = input("Enter your app-specific password: ").strip()
 
-    # Connect to Gmail
+    print("\n[INFO] Connecting to Gmail...")
     mail = connect_to_imap(email_user, app_password)
 
-    # Get user inputs for subject and date range
-    subject_filter, start_date, end_date = get_user_inputs()
+    while True:
+        # Get user inputs for search
+        subject_filter = input("\nEnter the email subject filter: ").strip()
+        start_date = input("Enter the start date (e.g., 01-Oct-2024): ").strip()
+        end_date = input("Enter the end date (e.g., 24-Oct-2024): ").strip()
 
-    # Search emails
-    email_ids = search_emails(mail, subject_filter, start_date, end_date)
+        print(f"\n[INFO] Searching for emails with subject containing '{subject_filter}' from {start_date} to {end_date}...")
+        email_ids = search_emails(mail, subject_filter, start_date, end_date)
 
-    # Fetch and extract tables from emails
-    tables = fetch_emails(mail, email_ids)
+        if email_ids:
+            print(f"[INFO] Fetching and processing {len(email_ids)} emails...")
+            tables = fetch_emails(mail, email_ids)
 
-    # Save tables to Excel
-    save_to_excel(tables)
+            if any(not df.empty for df in tables):
+                print("[INFO] Saving results to 'output/output.xlsx'...")
+                save_to_excel(tables)
+                print("[INFO] Successfully saved data to 'output/output.xlsx'")
+            else:
+                print("[INFO] No tables found in the emails.")
+        else:
+            print("[INFO] No matching emails found.")
 
-    # Logout from Gmail
+        # Ask the user if they want to perform another search
+        choice = input("\nDo you want to perform another search? (y/n): ").strip().lower()
+        if choice != 'y':
+            print("\n[INFO] Exiting the program...")
+            break
+
     logout_from_imap(mail)
+    print("[INFO] Process completed.")
+
+
+if __name__ == "__main__":
+    main()
+    print("\nPress any key to exit...")
+    msvcrt.getch()  # Wait for a key press before exiting
