@@ -5,7 +5,7 @@ from gmail_extractor import (
     fetch_emails,
     save_to_excel,
     logout_from_imap,
-    format_date  # Import the format_date function to use it here
+    format_date
 )
 
 
@@ -20,7 +20,7 @@ def main():
     while True:
         subject_filter = input("\nEnter the email subject filter: ").strip()
 
-        # Prompt for start and end dates, re-prompting as needed
+
         start_date = input("Enter the start date (YYYY-MM-DD): ").strip()
         start_date = format_date(start_date)
 
@@ -56,6 +56,6 @@ def main():
 if __name__ == "__main__":
     main()
     print("\nPress any key to exit...")
-    msvcrt.getch()  # Wait for a key press before exiting
+    msvcrt.getch()
 
 
