@@ -1,17 +1,16 @@
 ﻿import imaplib
-import getpass
 import email
 from bs4 import BeautifulSoup
 import pandas as pd
 import os
 import re
 from datetime import datetime
+from datetime import timedelta
+import xlsxwriter
+import warnings
 
-def console_login():
-    print("Welcome to the SAM Email Report Extractor v0.1.4!")
-    email_user = input("Enter your Gmail address: ").strip()
-    app_password = getpass.getpass("Enter your app-specific password (hidden): ").strip()
-    return email_user, app_password
+warnings.filterwarnings("ignore", category=FutureWarning, module="pandas.core.tools")
+
 
 def connect_to_imap(email_user, app_password):
     try:
@@ -20,22 +19,11 @@ def connect_to_imap(email_user, app_password):
         print("[INFO] Successfully connected to Gmail")
         return mail
     except imaplib.IMAP4.error:
-        print("[ERROR] Login failed. Please check your credentials.")
-        exit(1)
+        print("[ERROR] Login failed. Please check your email and password.")
+        return None
 
-def get_user_inputs():
-    subject_filter = input("Enter the email subject filter: ").strip()
-
-    start_date = input("Enter the start date (YYYY-MM-DD): ").strip()
-    start_date = format_date(start_date)
-
-    end_date = input("Enter the end date (YYYY-MM-DD): ").strip()
-    end_date = format_date(end_date)
-
-    return subject_filter, start_date, end_date
 
 def format_date(date_str):
-    """Convert date from 'YYYY-MM-DD' to 'DD-MMM-YYYY' for IMAP, with re-prompting for invalid formats."""
     while True:
         try:
             date_obj = datetime.strptime(date_str, '%Y-%m-%d')
@@ -45,13 +33,13 @@ def format_date(date_str):
             date_str = input("Re-enter the date (YYYY-MM-DD): ").strip()
 
 
-
-
 def search_emails(mail, subject_filter, start_date, end_date):
     try:
-        mail.select('"[Gmail]/All Mail"')
+        end_date_obj = datetime.strptime(end_date, '%d-%b-%Y') + timedelta(days=1)
+        end_date_inclusive = end_date_obj.strftime('%d-%b-%Y')
 
-        query = f'(SUBJECT "{subject_filter}" SINCE {start_date} BEFORE {end_date})'
+        mail.select('"[Gmail]/All Mail"')
+        query = f'(SUBJECT "{subject_filter}" SINCE {start_date} BEFORE {end_date_inclusive})'
         result, data = mail.search(None, query)
 
         if result != "OK":
@@ -66,6 +54,10 @@ def search_emails(mail, subject_filter, start_date, end_date):
         print(f"[ERROR] Failed to search emails: {str(e)}")
         return []
 
+    except Exception as e:
+        print(f"[ERROR] Failed to search emails: {str(e)}")
+        return []
+
 
 def extract_log_entries(email_body, email_timestamp):
     """
@@ -73,22 +65,16 @@ def extract_log_entries(email_body, email_timestamp):
     Adds a new column with the email's timestamp as the first column.
     """
     soup = BeautifulSoup(email_body, 'html.parser')
-
     logs = re.findall(r'Log:\s*([^\n<]+)', soup.get_text())
     if logs:
-        if "," in logs[0]:
-            delimiter = ","
-        elif ";" in logs[0]:
-            delimiter = ";"
-        else:
-            delimiter = "|"
-
+        delimiter = "," if "," in logs[0] else ";" if ";" in logs[0] else "|"
         headers = logs[0].replace(";", "|").replace(",", "|").split("|")
         data_rows = [log.replace(";", "|").replace(",", "|").split("|") for log in logs[1:]]
-
         df_logs = pd.DataFrame(data_rows, columns=headers)
-
         df_logs.insert(0, 'Email Timestamp', email_timestamp)
+
+        for col in df_logs.columns[1:]:
+            df_logs[col] = pd.to_numeric(df_logs[col], errors='ignore')
 
         if not df_logs.empty:
             print(f"[INFO] Extracted {len(df_logs)} rows from 'Log:' entries.")
@@ -110,22 +96,18 @@ def fetch_emails(mail, email_ids):
 
                     email_timestamp = "Unknown"
 
+                    # Extract the timestamp from the 'Received' headers
                     received_headers = msg.get_all('Received')
                     if received_headers and len(received_headers) >= 3:
                         third_received_header = received_headers[2]
-                        print(f"[DEBUG] Third 'Received' header: {third_received_header}")  # Debug line
 
+                        # Match and format the timestamp
                         match = re.search(r'(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})', third_received_header)
                         if match:
                             try:
-                                email_timestamp = datetime.strptime(match.group(1), "%Y-%m-%d %H:%M:%S")
-                                print(f"[DEBUG] Parsed timestamp: {email_timestamp}")
+                                email_timestamp = datetime.strptime(match.group(1), "%Y-%m-%d %H:%M:%S").strftime("%Y-%m-%d %H:%M:%S")
                             except ValueError as ve:
                                 print(f"[ERROR] Failed to parse timestamp: {ve}")
-                        else:
-                            print("[DEBUG] No valid date-time found in the third 'Received' header.")
-                    else:
-                        print("[DEBUG] Less than 3 'Received' headers found.")
 
                     email_body = None
                     if msg.is_multipart():
@@ -147,6 +129,7 @@ def fetch_emails(mail, email_ids):
                             )
 
                     if email_body:
+                        # Extract log entries and add the formatted timestamp
                         df_logs = extract_log_entries(email_body, email_timestamp)
 
                         if isinstance(df_logs, pd.DataFrame) and not df_logs.empty:
@@ -157,14 +140,34 @@ def fetch_emails(mail, email_ids):
 
     return tables
 
+
+
 def save_to_excel(tables, filename='output/output.xlsx'):
     if any(isinstance(df, pd.DataFrame) and not df.empty for df in tables):
         try:
-            combined_df = pd.concat([df for df in tables if isinstance(df, pd.DataFrame) and not df.empty], ignore_index=True)
+            combined_df = pd.concat([df for df in tables if isinstance(df, pd.DataFrame) and not df.empty],
+                                    ignore_index=True)
+            date_pattern = re.compile(r"^(0?[1-9]|1[0-2])/(0?[1-9]|[12][0-9]|3[01])/\d{4}$")
+
+            for col in combined_df.columns:
+                if combined_df[col].apply(lambda x: bool(date_pattern.match(str(x)))).mean() > 0.5:
+                    combined_df[col] = pd.to_datetime(combined_df[col], format='%m/%d/%Y', errors='coerce').dt.date
+                else:
+                    combined_df[col] = pd.to_numeric(combined_df[col], errors='ignore')
 
             os.makedirs(os.path.dirname(filename), exist_ok=True)
-            with pd.ExcelWriter(filename, engine='openpyxl') as writer:
+
+            with pd.ExcelWriter(filename, engine='xlsxwriter') as writer:
                 combined_df.to_excel(writer, sheet_name='Log Data', index=False)
+
+                workbook = writer.book
+                worksheet = writer.sheets['Log Data']
+                date_format = workbook.add_format({'num_format': 'mm/dd/yyyy'})
+
+                for col_num, col in enumerate(combined_df.columns):
+                    if combined_df[col].dtype == 'object' and combined_df[col].apply(
+                            lambda x: bool(date_pattern.match(str(x)))).mean() > 0.5:
+                        worksheet.set_column(col_num, col_num, 15, date_format)
 
             print(f"[INFO] Data saved to {filename}")
             print("[INFO] Data preview:")
@@ -174,20 +177,7 @@ def save_to_excel(tables, filename='output/output.xlsx'):
     else:
         print("[INFO] No valid data found to save.")
 
+
 def logout_from_imap(mail):
     mail.logout()
     print("[INFO] Logged out from Gmail")
-
-if __name__ == '__main__':
-    email_user, app_password = console_login()
-    mail = connect_to_imap(email_user, app_password)
-
-    subject_filter, start_date, end_date = get_user_inputs()
-
-    email_ids = search_emails(mail, subject_filter, start_date, end_date)
-
-    extracted_tables = fetch_emails(mail, email_ids)
-
-    save_to_excel(extracted_tables)
-
-    logout_from_imap(mail)
