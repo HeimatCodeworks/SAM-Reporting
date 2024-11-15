@@ -1,4 +1,5 @@
 ﻿import imaplib
+from tqdm import tqdm
 import email
 from bs4 import BeautifulSoup
 import pandas as pd
@@ -33,13 +34,17 @@ def format_date(date_str):
             date_str = input("Re-enter the date (YYYY-MM-DD): ").strip()
 
 
+from datetime import datetime, timedelta
+
+
 def search_emails(mail, subject_filter, start_date, end_date):
     try:
         end_date_obj = datetime.strptime(end_date, '%d-%b-%Y') + timedelta(days=1)
         end_date_inclusive = end_date_obj.strftime('%d-%b-%Y')
 
         mail.select('"[Gmail]/All Mail"')
-        query = f'(SUBJECT "{subject_filter}" SINCE {start_date} BEFORE {end_date_inclusive})'
+
+        query = f'(SUBJECT "{subject_filter}" SINCE {start_date} BEFORE {end_date_inclusive} NOT SUBJECT "Test Run")'
         result, data = mail.search(None, query)
 
         if result != "OK":
@@ -47,12 +52,8 @@ def search_emails(mail, subject_filter, start_date, end_date):
             return []
 
         email_ids = data[0].split()
-        print(f"[INFO] Found {len(email_ids)} emails matching criteria.")
+        print(f"[INFO] Found {len(email_ids)} emails matching criteria (excluding Test Runs).")
         return email_ids
-
-    except Exception as e:
-        print(f"[ERROR] Failed to search emails: {str(e)}")
-        return []
 
     except Exception as e:
         print(f"[ERROR] Failed to search emails: {str(e)}")
@@ -85,58 +86,63 @@ def extract_log_entries(email_body, email_timestamp):
 
 
 def fetch_emails(mail, email_ids):
+    """
+    Fetches and processes emails, displaying a single pinned loading bar at the bottom.
+    """
     tables = []
 
-    for i, email_id in enumerate(email_ids):
-        try:
-            result, msg_data = mail.fetch(email_id, '(RFC822)')
-            for response_part in msg_data:
-                if isinstance(response_part, tuple):
-                    msg = email.message_from_bytes(response_part[1])
+    # Initialize tqdm progress bar
+    with tqdm(total=len(email_ids), desc="Processing Emails", unit="email", leave=True, position=0) as pbar:
+        for i, email_id in enumerate(email_ids):
+            try:
+                # Fetch the email data
+                result, msg_data = mail.fetch(email_id, '(RFC822)')
+                for response_part in msg_data:
+                    if isinstance(response_part, tuple):
+                        msg = email.message_from_bytes(response_part[1])
 
-                    email_timestamp = "Unknown"
+                        email_timestamp = "Unknown"
 
-                    # Extract the timestamp from the 'Received' headers
-                    received_headers = msg.get_all('Received')
-                    if received_headers and len(received_headers) >= 3:
-                        third_received_header = received_headers[2]
-
-                        # Match and format the timestamp
-                        match = re.search(r'(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})', third_received_header)
-                        if match:
+                        # Extract timestamp from email's "Date" header
+                        date_header = msg.get("Date")
+                        if date_header:
                             try:
-                                email_timestamp = datetime.strptime(match.group(1), "%Y-%m-%d %H:%M:%S").strftime("%Y-%m-%d %H:%M:%S")
-                            except ValueError as ve:
-                                print(f"[ERROR] Failed to parse timestamp: {ve}")
+                                email_timestamp = datetime.strptime(date_header, "%a, %d %b %Y %H:%M:%S %z")
+                                email_timestamp = email_timestamp.strftime("%Y-%m-%d %H:%M:%S")
+                            except ValueError:
+                                print("[WARNING] Failed to parse email timestamp.")
 
-                    email_body = None
-                    if msg.is_multipart():
-                        for part in msg.walk():
-                            content_type = part.get_content_type()
-                            content_disposition = str(part.get("Content-Disposition"))
+                        # Extract email content
+                        email_body = None
+                        if msg.is_multipart():
+                            for part in msg.walk():
+                                content_type = part.get_content_type()
+                                content_disposition = str(part.get("Content-Disposition"))
 
-                            if content_type == 'text/html' and 'attachment' not in content_disposition:
-                                email_body = part.get_payload(decode=True).decode(
-                                    part.get_content_charset() or 'utf-8',
+                                if content_type == 'text/html' and 'attachment' not in content_disposition:
+                                    email_body = part.get_payload(decode=True).decode(
+                                        part.get_content_charset() or 'utf-8',
+                                        errors='ignore'
+                                    )
+                                    break
+                        else:
+                            if msg.get_content_type() == 'text/html':
+                                email_body = msg.get_payload(decode=True).decode(
+                                    msg.get_content_charset() or 'utf-8',
                                     errors='ignore'
                                 )
-                                break
-                    else:
-                        if msg.get_content_type() == 'text/html':
-                            email_body = msg.get_payload(decode=True).decode(
-                                msg.get_content_charset() or 'utf-8',
-                                errors='ignore'
-                            )
 
-                    if email_body:
-                        # Extract log entries and add the formatted timestamp
-                        df_logs = extract_log_entries(email_body, email_timestamp)
+                        # Process the email body
+                        if email_body:
+                            df_logs = extract_log_entries(email_body, email_timestamp)
+                            if isinstance(df_logs, pd.DataFrame) and not df_logs.empty:
+                                tables.append(df_logs)
 
-                        if isinstance(df_logs, pd.DataFrame) and not df_logs.empty:
-                            tables.append(df_logs)
+                # Update the progress bar
+                pbar.update(1)
 
-        except Exception as e:
-            print(f"[ERROR] Failed to fetch or parse email: {str(e)}")
+            except Exception as e:
+                print(f"[ERROR] Failed to fetch or parse email: {str(e)}")
 
     return tables
 
